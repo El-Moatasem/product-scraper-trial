@@ -14,6 +14,13 @@ return [
     'max_attempts' => max(1, (int) env('SCRAPER_MAX_ATTEMPTS', 2)),
     'max_response_bytes' => (int) env('SCRAPER_MAX_RESPONSE_BYTES', 2 * 1024 * 1024),
 
+    'listing' => [
+        'default_limit' => max(1, (int) env('SCRAPER_LISTING_DEFAULT_LIMIT', 8)),
+        'max_limit' => max(1, (int) env('SCRAPER_LISTING_MAX_LIMIT', 20)),
+        'default_max_pages' => max(1, (int) env('SCRAPER_LISTING_DEFAULT_MAX_PAGES', 1)),
+        'max_pages' => max(1, (int) env('SCRAPER_LISTING_MAX_PAGES', 5)),
+    ],
+
     'proxy_manager' => [
         'url' => rtrim((string) env('PROXY_MANAGER_URL', 'http://localhost:8081'), '/'),
         'token' => (string) env('PROXY_MANAGER_TOKEN', ''),
