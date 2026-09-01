@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import styles from "./products-dashboard.module.css";
 
 const REFRESH_INTERVAL_MS = 30_000;
@@ -21,12 +21,32 @@ type ProductsResponse = {
   data: Product[];
 };
 
+type ListingScrapeResponse = {
+  data: {
+    pages_visited: number;
+    discovered: number;
+    scraped: number;
+    created: number;
+    existing: number;
+    failed: number;
+  };
+};
+
+type ScrapeMode = "product" | "listing";
+
 export function ProductsDashboard() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [scrapeUrl, setScrapeUrl] = useState("");
+  const [scrapeMode, setScrapeMode] = useState<ScrapeMode>("product");
+  const [listingLimit, setListingLimit] = useState(8);
+  const [listingPages, setListingPages] = useState(1);
+  const [scraping, setScraping] = useState(false);
+  const [scrapeMessage, setScrapeMessage] = useState<string | null>(null);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
   const controllers = useRef(new Set<AbortController>());
 
   const loadProducts = useCallback(async (background = false) => {
@@ -69,6 +89,68 @@ export function ProductsDashboard() {
       setRefreshing(false);
     }
   }, []);
+
+  const submitScrape = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const url = scrapeUrl.trim();
+
+      if (!url) {
+        setScrapeError("Paste an Amazon or Jumia URL first.");
+        return;
+      }
+
+      setScraping(true);
+      setScrapeError(null);
+      setScrapeMessage(null);
+
+      const endpoint = scrapeMode === "listing" ? "products/scrape-listing" : "products/scrape";
+      const body =
+        scrapeMode === "listing"
+          ? { url, limit: listingLimit, max_pages: listingPages }
+          : { url };
+
+      try {
+        const response = await fetch(`${API_URL}/${endpoint}`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+
+        const payload = (await response.json()) as
+          | ListingScrapeResponse
+          | { message?: string; data?: Product };
+
+        if (!response.ok) {
+          const message = "message" in payload && payload.message ? payload.message : `Scrape API returned ${response.status}`;
+          throw new Error(message);
+        }
+
+        if (scrapeMode === "listing") {
+          const listing = payload as ListingScrapeResponse;
+          setScrapeMessage(
+            `Listing complete: ${listing.data.scraped} scraped, ${listing.data.created} new, ${listing.data.existing} already stored, ${listing.data.failed} failed across ${listing.data.pages_visited} page${listing.data.pages_visited === 1 ? "" : "s"}.`,
+          );
+        } else {
+          setScrapeMessage("Product scraped and stored successfully.");
+        }
+
+        await loadProducts(true);
+      } catch (requestError) {
+        setScrapeError(
+          requestError instanceof Error
+            ? requestError.message
+            : "The scrape request could not be completed.",
+        );
+      } finally {
+        setScraping(false);
+      }
+    },
+    [listingLimit, listingPages, loadProducts, scrapeMode, scrapeUrl],
+  );
 
   useEffect(() => {
     const activeControllers = controllers.current;
@@ -118,6 +200,99 @@ export function ProductsDashboard() {
         </button>
       </section>
 
+      <section className={styles.scrapePanel} aria-labelledby="scrape-heading">
+        <div className={styles.scrapeHeader}>
+          <div>
+            <p className={styles.eyebrow}>Scrape on demand</p>
+            <h2 id="scrape-heading">Add products from Amazon or Jumia</h2>
+            <p>
+              Paste one product page, or switch to category/listing mode to discover and scrape
+              multiple product pages automatically.
+            </p>
+          </div>
+          <div className={styles.modeSwitch} aria-label="Scrape type">
+            <button
+              type="button"
+              aria-pressed={scrapeMode === "product"}
+              onClick={() => setScrapeMode("product")}
+            >
+              Single product
+            </button>
+            <button
+              type="button"
+              aria-pressed={scrapeMode === "listing"}
+              onClick={() => setScrapeMode("listing")}
+            >
+              Category / listing
+            </button>
+          </div>
+        </div>
+
+        <form className={styles.scrapeForm} onSubmit={submitScrape}>
+          <label className={styles.urlField} htmlFor="scrape-url">
+            <span>Retailer URL</span>
+            <input
+              id="scrape-url"
+              type="url"
+              value={scrapeUrl}
+              onChange={(event) => setScrapeUrl(event.target.value)}
+              placeholder={
+                scrapeMode === "listing"
+                  ? "https://www.jumia.com.eg/laptops/?sort=lowest-price"
+                  : "https://www.amazon.eg/dp/PRODUCT_ID"
+              }
+              required
+            />
+          </label>
+
+          {scrapeMode === "listing" ? (
+            <div className={styles.listingOptions}>
+              <label htmlFor="listing-limit">
+                <span>Product limit</span>
+                <input
+                  id="listing-limit"
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={listingLimit}
+                  onChange={(event) => setListingLimit(Number(event.target.value))}
+                />
+              </label>
+              <label htmlFor="listing-pages">
+                <span>Max pages</span>
+                <input
+                  id="listing-pages"
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={listingPages}
+                  onChange={(event) => setListingPages(Number(event.target.value))}
+                />
+              </label>
+            </div>
+          ) : null}
+
+          <button className={styles.scrapeButton} type="submit" disabled={scraping}>
+            {scraping
+              ? "Scraping…"
+              : scrapeMode === "listing"
+                ? "Scrape listing"
+                : "Scrape product"}
+          </button>
+        </form>
+
+        {scrapeMessage ? (
+          <p className={styles.scrapeSuccess} role="status">
+            {scrapeMessage}
+          </p>
+        ) : null}
+        {scrapeError ? (
+          <p className={styles.scrapeFailure} role="alert">
+            {scrapeError}
+          </p>
+        ) : null}
+      </section>
+
       <div className={styles.statusRow} aria-live="polite">
         <strong>{products.length}</strong> {products.length === 1 ? "product" : "products"}
         <span aria-hidden="true">•</span>
@@ -142,7 +317,7 @@ export function ProductsDashboard() {
         <section className={styles.emptyState}>
           <span aria-hidden="true">◎</span>
           <h2>No products yet</h2>
-          <p>Run a scrape request against the Laravel API, and the result will appear here.</p>
+          <p>Paste a product or listing URL above and the stored results will appear here.</p>
         </section>
       ) : null}
 
