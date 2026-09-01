@@ -1,0 +1,114 @@
+name: product-scraper-trial
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-product_scraper}
+      MYSQL_USER: ${MYSQL_USER:-scraper}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-scraper_secret}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secret}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  proxy-manager:
+    build:
+      context: ./proxy-service
+    environment:
+      HTTP_ADDR: :8081
+      PROXY_URLS: ${PROXY_URLS:-}
+      PROXY_MANAGER_TOKEN: ${PROXY_MANAGER_TOKEN:-}
+      PROXY_FAILURE_THRESHOLD: ${PROXY_FAILURE_THRESHOLD:-3}
+      PROXY_COOLDOWN: ${PROXY_COOLDOWN:-60s}
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "/proxy-manager", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_NAME: Product Scraper API
+      APP_ENV: local
+      APP_KEY: base64:c29tZS1yYW5kb20tc3RyaW5nLXdpdGgtMzItYnl0ZXM=
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8000
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE:-product_scraper}
+      DB_USERNAME: ${MYSQL_USER:-scraper}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-scraper_secret}
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      FRONTEND_URL: http://localhost:3000
+      PROXY_MANAGER_URL: http://proxy-manager:8081
+      PROXY_MANAGER_TOKEN: ${PROXY_MANAGER_TOKEN:-}
+      PROXY_MANAGER_REQUIRED: ${PROXY_MANAGER_REQUIRED:-false}
+      SCRAPER_TIMEOUT_SECONDS: ${SCRAPER_TIMEOUT_SECONDS:-15}
+      SCRAPER_CONNECT_TIMEOUT_SECONDS: ${SCRAPER_CONNECT_TIMEOUT_SECONDS:-5}
+      SCRAPER_MAX_ATTEMPTS: ${SCRAPER_MAX_ATTEMPTS:-2}
+      SCRAPER_MAX_RESPONSE_BYTES: ${SCRAPER_MAX_RESPONSE_BYTES:-2097152}
+      SCRAPER_ALLOWED_HOSTS: ${SCRAPER_ALLOWED_HOSTS:-amazon.com,amazon.co.uk,amazon.eg,jumia.com,jumia.com.eg,jumia.co.ke,jumia.com.ng}
+      SCRAPER_LISTING_DEFAULT_LIMIT: ${SCRAPER_LISTING_DEFAULT_LIMIT:-8}
+      SCRAPER_LISTING_MAX_LIMIT: ${SCRAPER_LISTING_MAX_LIMIT:-20}
+      SCRAPER_LISTING_DEFAULT_MAX_PAGES: ${SCRAPER_LISTING_DEFAULT_MAX_PAGES:-1}
+      SCRAPER_LISTING_MAX_PAGES: ${SCRAPER_LISTING_MAX_PAGES:-5}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      proxy-manager:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/up"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/products"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  mysql_data:

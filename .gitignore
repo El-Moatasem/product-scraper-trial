@@ -1,30 +1,35 @@
-/vendor/
-node_modules/
-npm-debug.log
-yarn-error.log
+# Operating-system and editor files
+.DS_Store
+.idea/
+.vscode/
 
-# Laravel 4 specific
-bootstrap/compiled.php
-app/storage/
+# Generated assistant guidance from framework scaffolds
+AGENTS.md
+CLAUDE.md
 
-# Laravel 5 & Lumen specific
-public/storage
-public/hot
-
-# Laravel 5 & Lumen specific with changed public path
-public_html/storage
-public_html/hot
-
-storage/*.key
+# Environment and secrets
 .env
-Homestead.yaml
-Homestead.json
-/.vagrant
-.phpunit.result.cache
+.env.*
+!.env.example
 
-/public/build
-/storage/pail
-.env.backup
-.env.production
-.phpactor.json
-auth.json
+# PHP / Laravel
+backend/vendor/
+backend/boost.json
+backend/.phpunit.cache/
+backend/storage/logs/*.log
+backend/bootstrap/cache/*.php
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/.env.local
+
+# Go
+proxy-service/bin/
+proxy-service/coverage.out
+
+# Local artifacts
+*.zip
+*.tar.gz
