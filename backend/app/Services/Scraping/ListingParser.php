@@ -69,7 +69,7 @@ final class ListingParser
         if (str_contains($host, 'jumia.')) {
             return [
                 "//article[contains(concat(' ', normalize-space(@class), ' '), ' prd ')]//a[contains(concat(' ', normalize-space(@class), ' '), ' core ') and @href]/@href",
-                "//article[@data-id]//a[@href][1]/@href",
+                '//article[@data-id]//a[@href][1]/@href',
                 "//main//a[contains(@href, '.html')]/@href",
             ];
         }
