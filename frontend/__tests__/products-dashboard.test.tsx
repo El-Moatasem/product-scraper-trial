@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductsDashboard } from "@/components/products-dashboard";
 
@@ -65,5 +65,58 @@ describe("ProductsDashboard", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     expect(screen.getByText("Connection interrupted")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("can trigger a category listing scrape from the UI", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/products/scrape-listing") && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            data: {
+              pages_visited: 1,
+              discovered: 3,
+              scraped: 3,
+              created: 2,
+              existing: 1,
+              failed: 0,
+            },
+          }),
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => productResponse,
+      } as Response;
+    });
+
+    render(<ProductsDashboard />);
+    await screen.findByText("Noise-Cancelling Wireless Headphones");
+
+    fireEvent.click(screen.getByRole("button", { name: "Category / listing" }));
+    fireEvent.change(screen.getByLabelText("Retailer URL"), {
+      target: { value: "https://www.jumia.com.eg/laptops/?sort=lowest-price" },
+    });
+    fireEvent.change(screen.getByLabelText("Product limit"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Scrape listing" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:8000/api/products/scrape-listing",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            url: "https://www.jumia.com.eg/laptops/?sort=lowest-price",
+            limit: 3,
+            max_pages: 1,
+          }),
+        }),
+      );
+    });
+
+    expect(await screen.findByText(/Listing complete: 3 scraped/)).toBeTruthy();
   });
 });
