@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import styles from "./products-dashboard.module.css";
 
 const REFRESH_INTERVAL_MS = 30_000;
+const PRODUCTS_PER_PAGE = 9;
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api").replace(
   /\/$/,
   "",
@@ -17,8 +18,18 @@ export type Product = {
   created_at: string | null;
 };
 
+type PaginationMeta = {
+  current_page: number;
+  from: number | null;
+  last_page: number;
+  per_page: number;
+  to: number | null;
+  total: number;
+};
+
 type ProductsResponse = {
   data: Product[];
+  meta: PaginationMeta;
 };
 
 type ListingScrapeResponse = {
@@ -36,6 +47,15 @@ type ScrapeMode = "product" | "listing";
 
 export function ProductsDashboard() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationMeta>({
+    current_page: 1,
+    from: null,
+    last_page: 1,
+    per_page: PRODUCTS_PER_PAGE,
+    to: null,
+    total: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +69,7 @@ export function ProductsDashboard() {
   const [scrapeError, setScrapeError] = useState<string | null>(null);
   const controllers = useRef(new Set<AbortController>());
 
-  const loadProducts = useCallback(async (background = false) => {
+  const loadProducts = useCallback(async (background = false, targetPage = page) => {
     const controller = new AbortController();
     controllers.current.add(controller);
 
@@ -60,7 +80,11 @@ export function ProductsDashboard() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/products`, {
+      const params = new URLSearchParams({
+        page: String(targetPage),
+        per_page: String(PRODUCTS_PER_PAGE),
+      });
+      const response = await fetch(`${API_URL}/products?${params.toString()}`, {
         cache: "no-store",
         headers: { Accept: "application/json" },
         signal: controller.signal,
@@ -71,13 +95,18 @@ export function ProductsDashboard() {
       }
 
       const payload = (await response.json()) as ProductsResponse;
-      if (!Array.isArray(payload.data)) {
+      if (!Array.isArray(payload.data) || !payload.meta) {
         throw new Error("Product API returned an invalid response");
       }
 
       setProducts(payload.data);
+      setPagination(payload.meta);
       setError(null);
       setLastUpdated(new Date());
+
+      if (payload.meta.current_page !== page) {
+        setPage(payload.meta.current_page);
+      }
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === "AbortError") {
         return;
@@ -88,7 +117,7 @@ export function ProductsDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [page]);
 
   const submitScrape = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -138,7 +167,11 @@ export function ProductsDashboard() {
           setScrapeMessage("Product scraped and stored successfully.");
         }
 
-        await loadProducts(true);
+        if (page === 1) {
+          await loadProducts(true, 1);
+        } else {
+          setPage(1);
+        }
       } catch (requestError) {
         setScrapeError(
           requestError instanceof Error
@@ -149,7 +182,7 @@ export function ProductsDashboard() {
         setScraping(false);
       }
     },
-    [listingLimit, listingPages, loadProducts, scrapeMode, scrapeUrl],
+    [listingLimit, listingPages, loadProducts, page, scrapeMode, scrapeUrl],
   );
 
   useEffect(() => {
@@ -192,7 +225,7 @@ export function ProductsDashboard() {
         <button
           className={styles.refreshButton}
           type="button"
-          onClick={() => void loadProducts(true)}
+          onClick={() => void loadProducts(true, page)}
           disabled={loading || refreshing}
         >
           <RefreshIcon />
@@ -294,7 +327,13 @@ export function ProductsDashboard() {
       </section>
 
       <div className={styles.statusRow} aria-live="polite">
-        <strong>{products.length}</strong> {products.length === 1 ? "product" : "products"}
+        <strong>{pagination.total}</strong> {pagination.total === 1 ? "product" : "products"}
+        <span aria-hidden="true">•</span>
+        <span>
+          {pagination.total > 0
+            ? `Showing ${pagination.from ?? 0}–${pagination.to ?? 0}`
+            : "No stored products"}
+        </span>
         <span aria-hidden="true">•</span>
         <span>{lastUpdated ? `Updated ${formatTime(lastUpdated)}` : "Waiting for first update"}</span>
       </div>
@@ -322,11 +361,19 @@ export function ProductsDashboard() {
       ) : null}
 
       {!loading && products.length > 0 ? (
-        <section className={styles.grid} aria-label="Product results">
-          {products.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
-        </section>
+        <>
+          <section className={styles.grid} aria-label="Product results">
+            {products.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </section>
+          <ProductPagination
+            currentPage={pagination.current_page}
+            lastPage={pagination.last_page}
+            disabled={loading || refreshing}
+            onPageChange={setPage}
+          />
+        </>
       ) : null}
 
       <footer className={styles.footer}>
@@ -338,6 +385,73 @@ export function ProductsDashboard() {
       </footer>
     </main>
   );
+}
+
+function ProductPagination({
+  currentPage,
+  lastPage,
+  disabled,
+  onPageChange,
+}: {
+  currentPage: number;
+  lastPage: number;
+  disabled: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  if (lastPage <= 1) {
+    return null;
+  }
+
+  const pages = paginationWindow(currentPage, lastPage);
+
+  return (
+    <nav className={styles.pagination} aria-label="Product pagination">
+      <button
+        type="button"
+        onClick={() => onPageChange(currentPage - 1)}
+        disabled={disabled || currentPage <= 1}
+      >
+        Previous
+      </button>
+
+      <div className={styles.pageNumbers}>
+        {pages.map((pageNumber) => (
+          <button
+            key={pageNumber}
+            type="button"
+            className={pageNumber === currentPage ? styles.activePage : undefined}
+            aria-current={pageNumber === currentPage ? "page" : undefined}
+            aria-label={`Page ${pageNumber}`}
+            onClick={() => onPageChange(pageNumber)}
+            disabled={disabled}
+          >
+            {pageNumber}
+          </button>
+        ))}
+      </div>
+
+      <span className={styles.pageSummary}>
+        Page {currentPage} of {lastPage}
+      </span>
+
+      <button
+        type="button"
+        onClick={() => onPageChange(currentPage + 1)}
+        disabled={disabled || currentPage >= lastPage}
+      >
+        Next
+      </button>
+    </nav>
+  );
+}
+
+function paginationWindow(currentPage: number, lastPage: number): number[] {
+  const windowSize = 5;
+  let start = Math.max(1, currentPage - Math.floor(windowSize / 2));
+  const end = Math.min(lastPage, start + windowSize - 1);
+  start = Math.max(1, end - windowSize + 1);
+
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
 function ProductCard({ product }: { product: Product }) {
